@@ -320,6 +320,7 @@ func (p *portalProxy) doRequest(cnsiRequest *interfaces.CNSIRequest, done chan<-
 
 	// Copy original headers through, except custom portal-proxy Headers
 	fwdCNSIStandardHeaders(cnsiRequest, req)
+	req.Header.Set("Accept-Encoding", "identity")
 
 	// Mkae the request using the appropriate auth helper
 	switch tokenRec.AuthType {
