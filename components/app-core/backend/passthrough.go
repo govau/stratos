@@ -91,6 +91,10 @@ func getRequestParts(c echo.Context) (engine.Request, []byte, error) {
 	return req, body, nil
 }
 
+type jsonError struct {
+	Error string `json:"error"`
+}
+
 func buildJSONResponse(cnsiList []string, responses map[string]*CNSIRequest) map[string]*json.RawMessage {
 	log.Debug("buildJSONResponse")
 	jsonResponse := make(map[string]*json.RawMessage)
@@ -99,15 +103,15 @@ func buildJSONResponse(cnsiList []string, responses map[string]*CNSIRequest) map
 		cnsiResponse, ok := responses[guid]
 		switch {
 		case !ok:
-			response = []byte(`{"error": "Request timed out"}`)
+			response, _ = json.Marshal(&jsonError{"Request timed out"})
 		case cnsiResponse.Error != nil:
-			response = []byte(fmt.Sprintf(`{"error": %q}`, cnsiResponse.Error.Error()))
+			response, _ = json.Marshal(&jsonError{cnsiResponse.Error.Error()})
 		case cnsiResponse.Response != nil:
 			response = cnsiResponse.Response
 		}
 		// Check the HTTP Status code to make sure that it is actually a valid response
 		if cnsiResponse.StatusCode >= 400 {
-			response = []byte(fmt.Sprintf(`{"error": "Unexpected HTTP status code: %d"}`, cnsiResponse.StatusCode))
+			response, _ = json.Marshal(&jsonError{fmt.Sprintf("Unexpected HTTP status code: %d", cnsiResponse.StatusCode)})
 		}
 		if len(response) > 0 {
 			jsonResponse[guid] = (*json.RawMessage)(&response)
@@ -252,7 +256,7 @@ func (p *portalProxy) proxy(c echo.Context) error {
 		c.Response().WriteHeader(res.StatusCode)
 
 		// we don't care if this fails
-		_, _ = c.Response().Write(res.Response)
+		c.Response().Write(res.Response)
 
 		return nil
 	}
@@ -279,9 +283,7 @@ func (p *portalProxy) doRequest(cnsiRequest *CNSIRequest, done chan<- *CNSIReque
 	req, err = http.NewRequest(cnsiRequest.Method, cnsiRequest.URL.String(), body)
 	if err != nil {
 		cnsiRequest.Error = err
-		if done != nil {
-			done <- cnsiRequest
-		}
+		done <- cnsiRequest
 		return
 	}
 
@@ -293,14 +295,15 @@ func (p *portalProxy) doRequest(cnsiRequest *CNSIRequest, done chan<- *CNSIReque
 		cnsiRequest.StatusCode = 500
 		cnsiRequest.Response = []byte(err.Error())
 		cnsiRequest.Error = err
-	} else if res.Body != nil {
+		done <- cnsiRequest
+		return
+	}
+
+	if res.Body != nil {
 		cnsiRequest.StatusCode = res.StatusCode
 		cnsiRequest.Response, cnsiRequest.Error = ioutil.ReadAll(res.Body)
-		defer res.Body.Close()
+		res.Body.Close()
 	}
 
-	if done != nil {
-		done <- cnsiRequest
-	}
-
+	done <- cnsiRequest
 }

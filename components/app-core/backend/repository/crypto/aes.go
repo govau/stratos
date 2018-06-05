@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"strings"
 
 	log "github.com/Sirupsen/logrus"
 )
@@ -71,23 +72,32 @@ func Decrypt(key, ciphertext []byte) (plaintext []byte, err error) {
 }
 
 // ReadEncryptionKey - Read the encryption key from the shared volume
-func ReadEncryptionKey(v, f string) ([]byte, error) {
+func ReadEncryptionKey(v, f string, expectedKeyLength int) ([]byte, error) {
 	log.Println("ReadEncryptionKey")
 
-	encryptionKey := fmt.Sprintf("/%s/%s", v, f)
-	if string(f[0]) == "/" {
-		encryptionKey = fmt.Sprintf("%s/%s", v, f)
+	// TODO: I don't understand what these next few lines do, but it's a simpler
+	// refactor than how they used to work.
+	encryptionKeyPath := fmt.Sprintf("/%s/%s", v, f)
+	if strings.HasPrefix(f, "/") {
+		encryptionKeyPath = encryptionKeyPath[1:]
 	}
-	key64chars, err := ioutil.ReadFile(encryptionKey)
+
+	keyHexEncoded, err := ioutil.ReadFile(encryptionKeyPath)
 	if err != nil {
 		log.Errorf("Unable to read encryption key file: %+v\n", err)
 		return nil, err
 	}
 
-	key32bytes, err := hex.DecodeString(string(key64chars))
+	keyBytes, err := hex.DecodeString(string(keyHexEncoded))
 	if err != nil {
 		fmt.Println(err)
+		return nil, err
 	}
 
-	return key32bytes, nil
+	if len(keyBytes) != expectedKeyLength {
+		log.Errorf("expected encryption key to be %d bytes, instead: %d", expectedKeyLength, len(keyBytes))
+		return nil, errors.New("unexpected key length")
+	}
+
+	return keyBytes, nil
 }

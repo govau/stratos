@@ -76,7 +76,7 @@ type ConsoleConfig struct {
 	UAAEndpoint         *url.URL `json:"uaa_endpoint"`
 	ConsoleAdminScope   string   `json:"console_admin_scope"`
 	ConsoleClient       string   `json:"console_client"`
-	ConsoleClientSecret string   `json:"console_client"`
+	ConsoleClientSecret string   `json:"console_client_secret"`
 	SkipSSLValidation   bool     `json:"skip_ssl_validation"`
 	IsSetupComplete     bool     `json:"is_setup_complete"`
 }
@@ -97,7 +97,7 @@ type PortalConfig struct {
 	EncryptionKeyFilename       string   `configName:"ENCRYPTION_KEY_FILENAME"`
 	EncryptionKey               string   `configName:"ENCRYPTION_KEY"`
 	AutoRegisterCFUrl           string   `configName:"AUTO_REG_CF_URL"`
-	SSOredirectURL				string	 `configName:"SSO_REDIRECT_URL"`
+	SSOredirectURL              string   `configName:"SSO_REDIRECT_URL"`
 	CFAdminIdentifier           string
 	CloudFoundryInfo            *CFInfo
 	HTTPS                       bool

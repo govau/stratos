@@ -1,12 +1,10 @@
 package main
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"errors"
-	"strings"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/dgrijalva/jwt-go"
 )
 
 type userTokenInfo struct {
@@ -16,23 +14,23 @@ type userTokenInfo struct {
 	Scope       []string `json:"scope"`
 }
 
-func getUserTokenInfo(tok string) (u *userTokenInfo, err error) {
+// Valid required by jwt.Claims interface
+func (uti *userTokenInfo) Valid() error {
+	return errors.New("not valid, this should not be called")
+}
+
+func getUnverifiedUserTokenInfo(tok string) (*userTokenInfo, error) {
 	log.Debug("getUserTokenInfo")
-	accessToken := strings.TrimPrefix(tok, "bearer ")
-	splits := strings.Split(accessToken, ".")
 
-	if len(splits) < 3 {
-		return u, errors.New("Token was poorly formed.")
-	}
-
-	decoded, err := base64.RawStdEncoding.DecodeString(splits[1])
+	var rv userTokenInfo
+	_, _, err := (&jwt.Parser{
+		SkipClaimsValidation: true,
+		UseJSONNumber:        false,
+		ValidMethods:         nil,
+	}).ParseUnverified(tok, &rv)
 	if err != nil {
-		return u, errors.New("Unable to decode token string.")
+		return nil, err
 	}
 
-	if err = json.Unmarshal(decoded, &u); err != nil {
-		return u, errors.New("Failed to unmarshall decoded token.")
-	}
-
-	return u, err
+	return &rv, nil
 }

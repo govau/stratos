@@ -18,12 +18,13 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/andrewghobrial/sqlitestore"
 	"github.com/antonlindstrom/pgstore"
+	"github.com/gorilla/sessions"
 	"github.com/irfanhabib/mysqlstore"
 	"github.com/labstack/echo"
 	"github.com/labstack/echo/engine/standard"
 	"github.com/labstack/echo/middleware"
-	"github.com/andrewghobrial/sqlitestore"
 
 	"github.com/SUSE/stratos-ui/components/app-core/backend/config"
 	"github.com/SUSE/stratos-ui/components/app-core/backend/datastore"
@@ -219,17 +220,23 @@ func getEncryptionKey(pc interfaces.PortalConfig) ([]byte, error) {
 	log.Debug("getEncryptionKey")
 
 	// If it exists in "EncryptionKey" we must be in compose; use it.
-	if len(pc.EncryptionKey) > 0 {
+	if pc.EncryptionKey != "" {
 		key32bytes, err := hex.DecodeString(string(pc.EncryptionKey))
 		if err != nil {
 			log.Error(err)
+			return nil, err
+		}
+
+		if len(key32bytes) != 32 {
+			log.Errorf("expected encryption key to be 32 bytes, instead: %d", len(key32bytes))
+			return nil, errors.New("unexpected key length")
 		}
 
 		return key32bytes, nil
 	}
 
 	// Read the key from the shared volume
-	key, err := crypto.ReadEncryptionKey(pc.EncryptionKeyVolume, pc.EncryptionKeyFilename)
+	key, err := crypto.ReadEncryptionKey(pc.EncryptionKeyVolume, pc.EncryptionKeyFilename, 32)
 	if err != nil {
 		log.Errorf("Unable to read the encryption key from the shared volume: %v", err)
 		return nil, err
@@ -276,41 +283,43 @@ func initConnPool(dc datastore.DatabaseConfig) (*sql.DB, error) {
 func initSessionStore(db *sql.DB, databaseProvider string, pc interfaces.PortalConfig, sessionExpiry int) (HttpSessionStore, error) {
 	log.Debug("initSessionStore")
 
-	sessionsTable := "sessions"
-	setSecureCookie := true
+	var sessionStore HttpSessionStore
+	var sessionOptions *sessions.Options
 
-	if config.IsSet(VCapApplication) {
-		setSecureCookie = false
-	}
-
-	// Store depends on the DB Type
-	if databaseProvider == datastore.PGSQL {
+	switch databaseProvider {
+	case datastore.PGSQL:
 		log.Info("Creating Postgres session store")
-		sessionStore, err := pgstore.NewPGStoreFromPool(db, []byte(pc.SessionStoreSecret))
-		// Setup cookie-store options
-		sessionStore.Options.MaxAge = sessionExpiry
-		sessionStore.Options.HttpOnly = true
-		sessionStore.Options.Secure = setSecureCookie
-		return sessionStore, err
-	}
-	// Store depends on the DB Type
-	if databaseProvider == datastore.MYSQL {
+		pgSS, err := pgstore.NewPGStoreFromPool(db, []byte(pc.SessionStoreSecret))
+		if err != nil {
+			return nil, err
+		}
+		sessionOptions = pgSS.Options
+		sessionStore = pgSS
+
+	case datastore.MYSQL:
 		log.Info("Creating MySQL session store")
-		sessionStore, err := mysqlstore.NewMySQLStoreFromConnection(db, sessionsTable, "/", 3600, []byte(pc.SessionStoreSecret))
-		// Setup cookie-store options
-		sessionStore.Options.MaxAge = sessionExpiry
-		sessionStore.Options.HttpOnly = true
-		sessionStore.Options.Secure = setSecureCookie
-		return sessionStore, err
+		mysqlSS, err := mysqlstore.NewMySQLStoreFromConnection(db, "sessions", "/", 3600, []byte(pc.SessionStoreSecret)) // TODO - why isn't this stored as []byte and is it ever set?
+		if err != nil {
+			return nil, err
+		}
+		sessionOptions = mysqlSS.Options
+		sessionStore = mysqlSS
+
+	default:
+		log.Info("Creating SQLite session store")
+		sqlListSS, err := sqlitestore.NewSqliteStoreFromConnection(db, "sessions", "/", 3600, []byte(pc.SessionStoreSecret)) // TODO - why isn't this stored as []byte and is it ever set?
+		if err != nil {
+			return nil, err
+		}
+		sessionOptions = sqlListSS.Options
+		sessionStore = sqlListSS
 	}
 
-	log.Info("Creating SQLite session store")
-	sessionStore, err := sqlitestore.NewSqliteStoreFromConnection(db, sessionsTable, "/", 3600, []byte(pc.SessionStoreSecret))
 	// Setup cookie-store options
-	sessionStore.Options.MaxAge = sessionExpiry
-	sessionStore.Options.HttpOnly = true
-	sessionStore.Options.Secure = setSecureCookie
-	return sessionStore, err
+	sessionOptions.MaxAge = sessionExpiry
+	sessionOptions.HttpOnly = true
+	sessionOptions.Secure = pc.HTTPS
+	return sessionStore, nil
 }
 
 func loadPortalConfig(pc interfaces.PortalConfig) (interfaces.PortalConfig, error) {

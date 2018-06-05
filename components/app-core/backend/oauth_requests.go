@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"time"
 
@@ -30,7 +31,7 @@ func (p *portalProxy) doOauthFlowRequest(cnsiRequest *CNSIRequest, req *http.Req
 				"Endpoint type has not been registered %s: %s", cnsi.CNSIType, err)
 		}
 
-		if got401 || expTime.Before(time.Now()) {
+		if got401 || time.Now().After(expTime) {
 			refreshedTokenRec, err := p.RefreshToken(cnsi.SkipSSLValidation, cnsiRequest.GUID, cnsiRequest.UserGUID, clientID, "", cnsi.TokenEndpoint)
 			if err != nil {
 				return nil, fmt.Errorf("Couldn't refresh token for CNSI with GUID %s", cnsiRequest.GUID)
@@ -57,6 +58,11 @@ func (p *portalProxy) doOauthFlowRequest(cnsiRequest *CNSIRequest, req *http.Req
 		if got401 {
 			return res, errors.New("Failed to authorize")
 		}
+
+		// Always consume and close bodies so that connection can be re-used or freed earlier
+		ioutil.ReadAll(res.Body)
+		res.Body.Close()
+
 		got401 = true
 	}
 }
@@ -91,7 +97,7 @@ func (p *portalProxy) RefreshToken(skipSSLValidation bool, cnsiGUID, userGUID, c
 		return t, fmt.Errorf("Token refresh request failed: %v", err)
 	}
 
-	u, err := getUserTokenInfo(uaaRes.AccessToken)
+	u, err := getUnverifiedUserTokenInfo(uaaRes.AccessToken)
 	if err != nil {
 		return t, fmt.Errorf("Could not get user token info from access token")
 	}

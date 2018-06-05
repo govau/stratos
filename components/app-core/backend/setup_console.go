@@ -51,14 +51,6 @@ func (p *portalProxy) setupConsole(c echo.Context) error {
 	}
 	consoleConfig.SkipSSLValidation = skipSSLValidation
 
-	if err != nil {
-		return fmt.Errorf("Unable to intialise console backend config due to: %+v", err)
-		return interfaces.NewHTTPShadowError(
-			http.StatusInternalServerError,
-			"Failed to store Console configuration data",
-			"Failed to establish DB connection due to %s", err)
-	}
-
 	// Authenticate with UAA
 	authEndpoint := fmt.Sprintf("%s/oauth/token", url)
 	uaaRes, err := p.getUAATokenWithCreds(skipSSLValidation, username, password, consoleConfig.ConsoleClient, consoleConfig.ConsoleClientSecret, authEndpoint)
@@ -69,7 +61,7 @@ func (p *portalProxy) setupConsole(c echo.Context) error {
 			"Failed to authenticate with UAA due to %s", err)
 	}
 
-	userTokenInfo, err := getUserTokenInfo(uaaRes.AccessToken)
+	userTokenInfo, err := getUnverifiedUserTokenInfo(uaaRes.AccessToken)
 	if err != nil {
 		return interfaces.NewHTTPShadowError(
 			http.StatusBadRequest,
@@ -103,14 +95,6 @@ func (p *portalProxy) setupConsoleUpdate(c echo.Context) error {
 
 	consoleConfig := new(interfaces.ConsoleConfig)
 	consoleConfig.ConsoleAdminScope = c.FormValue("console_admin_scope")
-
-	if err != nil {
-		return fmt.Errorf("Unable to intialise console backend config due to: %+v", err)
-		return interfaces.NewHTTPShadowError(
-			http.StatusInternalServerError,
-			"Failed to store Console configuration data",
-			"Failed to establish DB connection due to %s", err)
-	}
 
 	err = consoleRepo.UpdateConsoleConfig(consoleConfig)
 	if err != nil {

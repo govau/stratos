@@ -61,13 +61,13 @@ func (p *portalProxy) removeEmptyCookie(c echo.Context) {
 }
 
 // Get the user name for the specified user
-func (p *portalProxy) GetUsername(userid string) (string, error) {
+func (p *portalProxy) GetUnverifiedUsername(userid string) (string, error) {
 	tr, err := p.GetUAATokenRecord(userid)
 	if err != nil {
 		return "", err
 	}
 
-	u, userTokenErr := getUserTokenInfo(tr.AuthToken)
+	u, userTokenErr := getUnverifiedUserTokenInfo(tr.AuthToken)
 	if userTokenErr != nil {
 		return "", userTokenErr
 	}
@@ -76,14 +76,14 @@ func (p *portalProxy) GetUsername(userid string) (string, error) {
 }
 
 func (p *portalProxy) initSSOlogin(c echo.Context) error {
-//<<<<<<< HEAD
-//	authUrl :=fmt.Sprintf("%s/oauth/authorize?response_type=code&client_id=%s&redirect_uri=%s/pp/v1/auth/sso_login_callback&state=stratos_portal_proxy", p.GetConfig().ConsoleConfig.UAAEndpoint, p.GetConfig().ConsoleConfig.ConsoleClient, p.GetConfig().SSOredirectURL)
-//	c.Redirect(http.StatusTemporaryRedirect, authUrl)
-//=======
 	state := c.QueryParam("state")
-	redirectUrl := fmt.Sprintf("%s/oauth/authorize?response_type=code&client_id=%s&redirect_uri=%s", p.Config.ConsoleConfig.UAAEndpoint, p.Config.ConsoleConfig.ConsoleClient, url.QueryEscape(getSSORedirectUri(state)))
+
+	redirectUrl := fmt.Sprintf("%s/oauth/authorize?%s", (&url.Values{
+		"response_type": []string{"code"},
+		"client_id":     []string{p.Config.ConsoleConfig.ConsoleClient},
+		"redirect_uri":  []string{getSSORedirectUri(state)},
+	}).Encode())
 	c.Redirect(http.StatusTemporaryRedirect, redirectUrl)
-//>>>>>>> parent/oauth
 	return nil
 }
 
@@ -184,7 +184,7 @@ func (p *portalProxy) DoLoginToCNSI(c echo.Context, cnsiGUID string) (*interface
 
 	uaaToken, err := p.GetUAATokenRecord(userID)
 	if err == nil { // Found the user's UAA token
-		u, err := getUserTokenInfo(uaaToken.AuthToken)
+		u, err := getUnverifiedUserTokenInfo(uaaToken.AuthToken)
 		if err != nil {
 			return nil, echo.NewHTTPError(http.StatusInternalServerError, "Could not parse current user UAA token")
 		}
@@ -350,7 +350,7 @@ func (p *portalProxy) RefreshUAALogin(username, password string, store bool) err
 		return err
 	}
 
-	u, err := getUserTokenInfo(uaaRes.AccessToken)
+	u, err := getUnverifiedUserTokenInfo(uaaRes.AccessToken)
 	if err != nil {
 		return err
 	}
@@ -371,31 +371,26 @@ func (p *portalProxy) login(c echo.Context, skipSSLValidation bool, client strin
 	if c.Request().Method() == http.MethodGet {
 		code := c.QueryParam("code")
 		state := c.QueryParam("state")
-//<<<<<<< HEAD
-//
-//		if len(code) == 0 || state != "stratos_portal_proxy" {
-//			return uaaRes, u, errors.New("no code query parameter provided or invalid state query parameter")
-//		}
-//		uaaRes, err = p.getUAATokenWithAuthorizationCode(skipSSLValidation, code, client, clientSecret, endpoint)
-//=======
 		uaaRes, err = p.getUAATokenWithAuthorizationCode(skipSSLValidation, code, client, clientSecret, endpoint, state)
-//>>>>>>> parent/oauth
+		if err != nil {
+			return nil, nil, err
+		}
 	} else {
 		username := c.FormValue("username")
 		password := c.FormValue("password")
 
 		if len(username) == 0 || len(password) == 0 {
-			return uaaRes, u, errors.New("Needs username and password")
+			return nil, nil, errors.New("Needs username and password")
 		}
 		uaaRes, err = p.getUAATokenWithCreds(skipSSLValidation, username, password, client, clientSecret, endpoint)
-	}
-	if err != nil {
-		return uaaRes, u, err
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
-	u, err = getUserTokenInfo(uaaRes.AccessToken)
+	u, err = getUnverifiedUserTokenInfo(uaaRes.AccessToken)
 	if err != nil {
-		return uaaRes, u, err
+		return nil, nil, err
 	}
 
 	return uaaRes, u, nil
@@ -417,46 +412,45 @@ func (p *portalProxy) logout(c echo.Context) error {
 func (p *portalProxy) getUAATokenWithAuthorizationCode(skipSSLValidation bool, code, client, clientSecret, authEndpoint string, state string) (*UAAResponse, error) {
 	log.Debug("getUAATokenWithCreds")
 
-	//redirectUrl:=fmt.Sprintf("%s/pp/v1/auth/sso_login_callback",p.GetConfig().SSOredirectURL)
-	body := url.Values{}
-	body.Set("grant_type", "authorization_code")
-	body.Set("code", code)
-//<<<<<<< HEAD
-//	body.Set("redirect_uri", redirectUrl)
-//=======
-	body.Set("client_id", client)
-	body.Set("client_secret", clientSecret)
-	body.Set("redirect_uri", getSSORedirectUri(state))
-	log.Info(getSSORedirectUri(state))
-//>>>>>>> parent/oauth
+	redirURI := getSSORedirectUri(state)
+	log.Info(redirURI)
 
-	return p.getUAAToken(body, skipSSLValidation, client, clientSecret, authEndpoint)
+	return p.getUAAToken(url.Values{
+		"grant_type":    []string{"authorization_code"},
+		"code":          []string{code},
+		"redirect_uri":  []string{redirURI},
+		"client_id":     []string{client},
+		"client_secret": []string{clientSecret},
+		"response_type": []string{"token"},
+	}, skipSSLValidation, authEndpoint)
 }
 
 func (p *portalProxy) getUAATokenWithCreds(skipSSLValidation bool, username, password, client, clientSecret, authEndpoint string) (*UAAResponse, error) {
 	log.Debug("getUAATokenWithCreds")
 
-	body := url.Values{}
-	body.Set("grant_type", "password")
-	body.Set("username", username)
-	body.Set("password", password)
-	body.Set("response_type", "token")
-
-	return p.getUAAToken(body, skipSSLValidation, client, clientSecret, authEndpoint)
+	return p.getUAAToken(url.Values{
+		"grant_type":    []string{"password"},
+		"username":      []string{username},
+		"password":      []string{password},
+		"client_id":     []string{client},
+		"client_secret": []string{clientSecret},
+		"response_type": []string{"token"},
+	}, skipSSLValidation, authEndpoint)
 }
 
 func (p *portalProxy) getUAATokenWithRefreshToken(skipSSLValidation bool, refreshToken, client, clientSecret, authEndpoint string) (*UAAResponse, error) {
 	log.Debug("getUAATokenWithRefreshToken")
 
-	body := url.Values{}
-	body.Set("grant_type", "refresh_token")
-	body.Set("refresh_token", refreshToken)
-	body.Set("response_type", "token")
-
-	return p.getUAAToken(body, skipSSLValidation, client, clientSecret, authEndpoint)
+	return p.getUAAToken(url.Values{
+		"grant_type":    []string{"refresh_token"},
+		"refresh_token": []string{refreshToken},
+		"client_id":     []string{client},
+		"client_secret": []string{clientSecret},
+		"response_type": []string{"token"},
+	}, skipSSLValidation, authEndpoint)
 }
 
-func (p *portalProxy) getUAAToken(body url.Values, skipSSLValidation bool, client, clientSecret, authEndpoint string) (*UAAResponse, error) {
+func (p *portalProxy) getUAAToken(body url.Values, skipSSLValidation bool, authEndpoint string) (*UAAResponse, error) {
 	log.WithField("authEndpoint", authEndpoint).Debug("getUAAToken")
 	req, err := http.NewRequest("POST", authEndpoint, strings.NewReader(body.Encode()))
 	if err != nil {
@@ -465,7 +459,6 @@ func (p *portalProxy) getUAAToken(body url.Values, skipSSLValidation bool, clien
 		return nil, fmt.Errorf(msg, err)
 	}
 
-	req.SetBasicAuth(client, clientSecret)
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
 
 	var h http.Client
@@ -612,7 +605,7 @@ func (p *portalProxy) verifySession(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusForbidden, msg)
 		}
 
-		u, userTokenErr := getUserTokenInfo(uaaRes.AccessToken)
+		u, userTokenErr := getUnverifiedUserTokenInfo(uaaRes.AccessToken)
 		if userTokenErr != nil {
 			return userTokenErr
 		}
@@ -680,6 +673,15 @@ func (p *portalProxy) handleSessionExpiryHeader(c echo.Context) error {
 	return nil
 }
 
+func containsScope(scopes []string, scope string) bool {
+	for _, s := range scopes {
+		if s == scope {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *portalProxy) getUAAUser(userGUID string) (*interfaces.ConnectedUser, error) {
 	log.Debug("getUAAUser")
 
@@ -692,7 +694,7 @@ func (p *portalProxy) getUAAUser(userGUID string) (*interfaces.ConnectedUser, er
 	}
 
 	// get the scope out of the JWT token data
-	userTokenInfo, err := getUserTokenInfo(uaaTokenRecord.AuthToken)
+	userTokenInfo, err := getUnverifiedUserTokenInfo(uaaTokenRecord.AuthToken)
 	if err != nil {
 		msg := "Unable to find scope information in the UAA Auth Token: %s"
 		log.Errorf(msg, err)
@@ -700,7 +702,7 @@ func (p *portalProxy) getUAAUser(userGUID string) (*interfaces.ConnectedUser, er
 	}
 
 	// is the user a UAA admin?
-	uaaAdmin := strings.Contains(strings.Join(userTokenInfo.Scope, ""), p.Config.ConsoleConfig.ConsoleAdminScope)
+	uaaAdmin := containsScope(userTokenInfo.Scope, p.Config.ConsoleConfig.ConsoleAdminScope)
 
 	// add the uaa entry to the output
 	uaaEntry := &interfaces.ConnectedUser{
@@ -724,7 +726,7 @@ func (p *portalProxy) GetCNSIUser(cnsiGUID string, userGUID string) (*interfaces
 	}
 
 	// get the scope out of the JWT token data
-	userTokenInfo, err := getUserTokenInfo(cfTokenRecord.AuthToken)
+	userTokenInfo, err := getUnverifiedUserTokenInfo(cfTokenRecord.AuthToken)
 	if err != nil {
 		msg := "Unable to find scope information in the CNSI UAA Auth Token: %s"
 		log.Errorf(msg, err)
@@ -746,8 +748,7 @@ func (p *portalProxy) GetCNSIUser(cnsiGUID string, userGUID string) (*interfaces
 	}
 	// TODO should be an extension point
 	if cnsiRecord.CNSIType == "cf" {
-		cnsiAdmin := strings.Contains(strings.Join(userTokenInfo.Scope, ""), p.Config.CFAdminIdentifier)
-		cnsiUser.Admin = cnsiAdmin
+		cnsiUser.Admin = containsScope(userTokenInfo.Scope, p.Config.CFAdminIdentifier)
 	}
 
 	return cnsiUser, true
@@ -768,7 +769,7 @@ func (p *portalProxy) RefreshUAAToken(userGUID string) (t interfaces.TokenRecord
 		return t, fmt.Errorf("UAA Token refresh request failed: %v", err)
 	}
 
-	u, err := getUserTokenInfo(uaaRes.AccessToken)
+	u, err := getUnverifiedUserTokenInfo(uaaRes.AccessToken)
 	if err != nil {
 		return t, fmt.Errorf("Could not get user token info from access token")
 	}
